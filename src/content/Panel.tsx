@@ -19,9 +19,13 @@ export function Panel() {
   const [rewriteInput, setRewriteInput] = useState('')
   const [activeAction, setActiveAction] = useState<ActionType | null>(null)
   const [copied, setCopied] = useState(false)
+  const [isPro, setIsPro] = useState(false)
 
   useEffect(() => {
     getUsageCount().then((c) => setRemaining(getRemainingUses(c)))
+    chrome.runtime.sendMessage({ type: 'AUTH_GET_STATE' }, (res) => {
+      if (res?.isPro) setIsPro(true)
+    })
   }, [])
 
   async function run(action: ActionType) {
@@ -30,10 +34,12 @@ export function Panel() {
     setCopied(false)
     setActiveAction(action)
 
-    const allowed = await canUse()
-    if (!allowed) {
-      setError('Daily limit reached (10/day on free plan). Upgrade to Pro for unlimited.')
-      return
+    if (!isPro) {
+      const allowed = await canUse()
+      if (!allowed) {
+        setError('Daily limit reached (10/day). Upgrade to Pro for unlimited — click the extension icon.')
+        return
+      }
     }
 
     const profile = scrapeProfile()
@@ -77,9 +83,10 @@ export function Panel() {
     <div style={styles.panel}>
       <div style={styles.header}>
         <span style={styles.logo}>✦ AI Assistant</span>
-        {remaining !== null && (
-          <span style={styles.badge}>{remaining} left today</span>
-        )}
+        {isPro
+          ? <span style={{ ...styles.badge, backgroundColor: '#fff3cd', color: '#856404' }}>⚡ Pro</span>
+          : remaining !== null && <span style={styles.badge}>{remaining} left today</span>
+        }
       </div>
 
       <div style={styles.buttons}>

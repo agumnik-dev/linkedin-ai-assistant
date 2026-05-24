@@ -7,7 +7,7 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["storage"],
+  "permissions": ["storage", "identity", "tabs"],
   "host_permissions": [
     "https://www.linkedin.com/*",
     "https://api.anthropic.com/*"
