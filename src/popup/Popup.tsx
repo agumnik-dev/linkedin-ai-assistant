@@ -26,25 +26,42 @@ export function Popup() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    sendMsg('AUTH_GET_STATE').then((res) => {
-      setAuth({ userId: res.userId as string | null, email: res.email as string | null, isPro: (res.isPro as boolean) ?? false })
-    })
-    chrome.storage.local.get('lai_usage', (result) => {
+    // Read auth state from storage — survives popup close during OAuth
+    chrome.storage.local.get(['lai_auth', 'lai_usage'], (result) => {
+      const stored = result['lai_auth'] as AuthState & { error?: string } | undefined
+      if (stored?.userId) {
+        setAuth({ userId: stored.userId, email: stored.email, isPro: stored.isPro })
+        if (stored.error) setError(stored.error)
+      } else {
+        // Fallback: ask background (handles first load before any sign-in)
+        sendMsg('AUTH_GET_STATE').then((res) => {
+          setAuth({ userId: res.userId as string | null, email: res.email as string | null, isPro: (res.isPro as boolean) ?? false })
+        })
+      }
       const record = result['lai_usage'] as { date: string; count: number } | undefined
       if (record && record.date === today()) setUsed(record.count)
     })
+
+    // Live-update popup if auth state changes while popup is open
+    const listener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === 'local' && changes['lai_auth']) {
+        const s = changes['lai_auth'].newValue as AuthState | undefined
+        if (s) setAuth({ userId: s.userId, email: s.email, isPro: s.isPro })
+      }
+    }
+    chrome.storage.onChanged.addListener(listener)
+    return () => chrome.storage.onChanged.removeListener(listener)
   }, [])
 
   async function handleSignIn() {
     setLoading(true)
     setError('')
-    const res = await sendMsg('AUTH_SIGN_IN')
-    if (res.success) {
-      setAuth({ userId: res.userId as string, email: res.email as string, isPro: res.isPro as boolean })
-    } else {
-      setError(res.error as string ?? 'Sign in failed')
-    }
-    setLoading(false)
+    // Fire and forget — popup may close when Google auth window opens.
+    // Background stores result in lai_auth; storage.onChanged updates popup if still open.
+    chrome.runtime.sendMessage({ type: 'AUTH_SIGN_IN' }, (res) => {
+      if (res && !res.success) setError(res.error ?? 'Sign in failed')
+      setLoading(false)
+    })
   }
 
   async function handleSignOut() {

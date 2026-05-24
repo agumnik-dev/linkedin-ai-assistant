@@ -40,11 +40,26 @@ async function signIn(): Promise<void> {
     })
   })
 
-  const code = new URL(callbackUrl).searchParams.get('code')
-  if (!code) throw new Error('No code in OAuth callback')
+  const parsed = new URL(callbackUrl)
+  const hashParams = new URLSearchParams(parsed.hash.slice(1))
 
-  const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
-  if (exchangeError) throw exchangeError
+  // PKCE flow: code in search params
+  const code = parsed.searchParams.get('code')
+  if (code) {
+    const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
+    if (exchangeError) throw new Error(`Exchange failed: ${exchangeError.message}`)
+    return
+  }
+
+  // Implicit flow: tokens in hash fragment
+  const accessToken = hashParams.get('access_token')
+  const refreshToken = hashParams.get('refresh_token')
+  if (!accessToken || !refreshToken) {
+    throw new Error(`No tokens in callback: ${callbackUrl.slice(0, 200)}`)
+  }
+
+  const { error: sessionError } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+  if (sessionError) throw new Error(`Set session failed: ${sessionError.message}`)
 }
 
 async function getAuthState(): Promise<{ userId: string | null; email: string | null; isPro: boolean }> {
@@ -144,21 +159,34 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'AUTH_SIGN_IN') {
     signIn()
       .then(() => getAuthState())
-      .then((state) => sendResponse({ success: true, ...state }))
-      .catch((err) => sendResponse({ success: false, error: err.message }))
+      .then(async (state) => {
+        // Persist auth state so popup can read it even after it closed during OAuth
+        await chrome.storage.local.set({ lai_auth: state })
+        sendResponse({ success: true, ...state })
+      })
+      .catch(async (err) => {
+        await chrome.storage.local.set({ lai_auth: { userId: null, email: null, isPro: false, error: err.message } })
+        sendResponse({ success: false, error: err.message })
+      })
     return true
   }
 
   if (message.type === 'AUTH_SIGN_OUT') {
     supabase.auth.signOut()
-      .then(() => sendResponse({ success: true }))
+      .then(async () => {
+        await chrome.storage.local.remove('lai_auth')
+        sendResponse({ success: true })
+      })
       .catch((err) => sendResponse({ success: false, error: err.message }))
     return true
   }
 
   if (message.type === 'AUTH_GET_STATE') {
     getAuthState()
-      .then((state) => sendResponse({ success: true, ...state }))
+      .then(async (state) => {
+        await chrome.storage.local.set({ lai_auth: state })
+        sendResponse({ success: true, ...state })
+      })
       .catch((err) => sendResponse({ success: false, error: err.message }))
     return true
   }
