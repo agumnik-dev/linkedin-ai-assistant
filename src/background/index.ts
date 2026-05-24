@@ -40,6 +40,8 @@ async function signIn(): Promise<void> {
     })
   })
 
+  await chrome.storage.local.remove('lai_debug_callback')
+
   const parsed = new URL(callbackUrl)
   const hashParams = new URLSearchParams(parsed.hash.slice(1))
 
